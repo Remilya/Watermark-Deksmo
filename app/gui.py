@@ -61,8 +61,11 @@ class WatermarkApp(ctk.CTk):
         self.current_chapter_idx = 0
         self.current_page_idx = 0
         self.chapter_buttons: List[ctk.CTkButton] = []
+        self.chapter_checkboxes: List[ctk.CTkCheckBox] = []  # v1.1: Chapter selection
+        self.chapter_check_vars: List[ctk.BooleanVar] = []   # v1.1: Checkbox states
         self.page_buttons: List[ctk.CTkButton] = []
         self.manual_position: Optional[Tuple[int, int]] = None  # For click-to-position
+        self.page_positions: dict = {}  # v1.1: {filename: (x, y)} per-page positions
         
         self._build_ui()
         self._setup_bindings()
@@ -126,7 +129,7 @@ class WatermarkApp(ctk.CTk):
         
         # Version
         version = ctk.CTkLabel(
-            header, text="v1.0", font=get_font("xs"),
+            header, text="v1.1", font=get_font("xs"),
             text_color=COLORS["text_muted"], fg_color=COLORS["bg_hover"],
             corner_radius=4, padx=6, pady=2
         )
@@ -168,7 +171,32 @@ class WatermarkApp(ctk.CTk):
         self.output_selector.pack(fill="x", pady=(0, SPACING["md"]))
         
         # === CHAPTERS SECTION ===
-        self._add_section_header(scroll, "📚 CHAPTERS")
+        chapters_header = ctk.CTkFrame(scroll, fg_color="transparent")
+        chapters_header.pack(fill="x", pady=(SPACING["sm"], 4))
+        
+        ctk.CTkLabel(chapters_header, text="📚 CHAPTERS", font=get_font("xs", bold=True),
+                     text_color=COLORS["primary"]).pack(side="left")
+        
+        # v1.1: Select All/None buttons
+        ch_btns = ctk.CTkFrame(chapters_header, fg_color="transparent")
+        ch_btns.pack(side="right")
+        
+        ctk.CTkButton(
+            ch_btns, text="All", width=32, height=18, corner_radius=3,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["primary"],
+            font=get_font("xs"), command=self._select_all_chapters
+        ).pack(side="left", padx=1)
+        
+        ctk.CTkButton(
+            ch_btns, text="None", width=36, height=18, corner_radius=3,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["secondary"],
+            font=get_font("xs"), command=self._deselect_all_chapters
+        ).pack(side="left", padx=1)
+        
+        self.chapter_select_label = ctk.CTkLabel(
+            ch_btns, text="0/0", font=get_font("xs"), text_color=COLORS["text_muted"], width=35
+        )
+        self.chapter_select_label.pack(side="left", padx=(4, 0))
         
         self.chapter_frame = ctk.CTkScrollableFrame(
             scroll, fg_color=COLORS["bg_dark"], corner_radius=RADIUS["sm"], height=80
@@ -205,9 +233,45 @@ class WatermarkApp(ctk.CTk):
         self.next_btn.pack(side="left", padx=1)
         
         self.page_frame = ctk.CTkScrollableFrame(
-            scroll, fg_color=COLORS["bg_dark"], corner_radius=RADIUS["sm"], height=100
+            scroll, fg_color=COLORS["bg_dark"], corner_radius=RADIUS["sm"], height=80
         )
-        self.page_frame.pack(fill="x", pady=(0, SPACING["md"]))
+        self.page_frame.pack(fill="x", pady=(0, SPACING["sm"]))
+        
+        # v1.1: PAGE POSITION SECTION - Made more visible
+        self._add_section_header(scroll, "🎯 PAGE POSITION")
+        
+        pos_btns = ctk.CTkFrame(scroll, fg_color="transparent")
+        pos_btns.pack(fill="x", pady=(0, SPACING["sm"]))
+        
+        self.save_pos_btn = ctk.CTkButton(
+            pos_btns, text="💾 Save Position for Page", height=32, corner_radius=6,
+            fg_color=COLORS["secondary"], hover_color=COLORS["secondary_hover"],
+            font=get_font("sm", bold=True), command=self._save_page_position
+        )
+        self.save_pos_btn.pack(fill="x", pady=(0, 4))
+        
+        clear_row = ctk.CTkFrame(pos_btns, fg_color="transparent")
+        clear_row.pack(fill="x")
+        
+        self.clear_pos_btn = ctk.CTkButton(
+            clear_row, text="🗑️ Clear This Page", height=26, corner_radius=4,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
+            font=get_font("xs"), command=self._clear_page_position
+        )
+        self.clear_pos_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        
+        self.clear_all_btn = ctk.CTkButton(
+            clear_row, text="Clear All", height=26, corner_radius=4,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
+            font=get_font("xs"), command=self._clear_all_positions
+        )
+        self.clear_all_btn.pack(side="left")
+        
+        self.pos_count_label = ctk.CTkLabel(
+            scroll, text="📍 0 pages with saved positions", font=get_font("xs"),
+            text_color=COLORS["text_muted"], anchor="w"
+        )
+        self.pos_count_label.pack(fill="x", pady=(4, SPACING["md"]))
         
         # === POSITION SECTION ===
         self._add_section_header(scroll, "📍 POSITION")
@@ -367,16 +431,39 @@ class WatermarkApp(ctk.CTk):
         
         self.chapters = [e[1] for e in entries]
         
-        # Create buttons
+        # v1.1: Reset checkbox variables
+        self.chapter_check_vars = []
+        self.chapter_checkboxes = []
+        
+        # Create chapter rows with checkboxes
         for i, (name, _) in enumerate(entries):
+            row = ctk.CTkFrame(self.chapter_frame, fg_color="transparent")
+            row.pack(fill="x", pady=1)
+            
+            # Checkbox
+            var = ctk.BooleanVar(value=True)  # Default: selected
+            self.chapter_check_vars.append(var)
+            
+            cb = ctk.CTkCheckBox(
+                row, text="", variable=var, width=20, height=20,
+                checkbox_width=16, checkbox_height=16,
+                fg_color=COLORS["primary"], hover_color=COLORS["primary_hover"],
+                command=self._update_chapter_count
+            )
+            cb.pack(side="left", padx=(2, 4))
+            self.chapter_checkboxes.append(cb)
+            
+            # Button
             btn = ctk.CTkButton(
-                self.chapter_frame, text=name, anchor="w", height=22, corner_radius=4,
+                row, text=name, anchor="w", height=20, corner_radius=4,
                 fg_color="transparent", hover_color=COLORS["bg_hover"],
                 text_color=COLORS["text_primary"], font=get_font("xs"),
                 command=lambda idx=i: self._select_chapter(idx)
             )
-            btn.pack(fill="x", pady=1)
+            btn.pack(side="left", fill="x", expand=True)
             self.chapter_buttons.append(btn)
+        
+        self._update_chapter_count()
         
         if entries:
             self._select_chapter(0)
@@ -432,7 +519,9 @@ class WatermarkApp(ctk.CTk):
             return
         
         self.current_page_idx = index
+        page = self.pages[index]
         
+        # Highlight button
         for i, btn in enumerate(self.page_buttons):
             if i == index:
                 btn.configure(fg_color=COLORS["secondary"], text_color=COLORS["text_primary"])
@@ -440,6 +529,16 @@ class WatermarkApp(ctk.CTk):
                 btn.configure(fg_color="transparent", text_color=COLORS["text_secondary"])
         
         self.page_label.configure(text=f"{index+1}/{len(self.pages)}")
+        
+        # v1.1: Load saved position for this page (if any)
+        saved_pos = self.page_positions.get(page.name)
+        if saved_pos:
+            # Set the preview panel's crosshair to saved position
+            self.preview_panel.set_manual_position(saved_pos)
+        else:
+            # Clear any previous position
+            self.preview_panel.clear_manual_position()
+        
         self._refresh_preview()
     
     def _shift_page(self, delta: int):
@@ -490,20 +589,26 @@ class WatermarkApp(ctk.CTk):
             return
         
         try:
-            args = self._build_args()
+            args = self._build_args(for_page=page.name)
             canvas, info = compose_watermarked_image(page, self.watermark_image, args, {})
             self.preview_panel.show_image(canvas, info)
         except Exception as e:
             self.preview_panel.show_placeholder(f"Error: {e}")
     
-    def _build_args(self) -> Namespace:
-        """Build args from current settings."""
-        # Check for manual position from click-to-position
-        manual_pos = self.preview_panel.get_manual_position() if hasattr(self, 'preview_panel') else None
+    def _build_args(self, for_page: str = None) -> Namespace:
+        """Build args from current settings. for_page is the filename to check for saved position."""
+        # v1.1: Check saved page position first, then preview crosshair
+        manual_pos = None
         
-        # If manual position is set, use it as center anchor with specific offsets
+        if for_page and for_page in self.page_positions:
+            # Use saved position for this specific page
+            manual_pos = self.page_positions[for_page]
+        elif hasattr(self, 'preview_panel'):
+            # Fall back to current preview panel position
+            manual_pos = self.preview_panel.get_manual_position()
+        
+        # If manual position is set, use top-left anchor with offsets
         if manual_pos:
-            # Use center anchor and calculate offset from center
             anchor = "top-left"
             offset_x = manual_pos[0]
             offset_y = manual_pos[1]
@@ -534,7 +639,7 @@ class WatermarkApp(ctk.CTk):
         )
     
     def _start_processing(self):
-        """Start batch processing."""
+        """Start batch processing with v1.1 features."""
         if self.running:
             return
         
@@ -552,18 +657,67 @@ class WatermarkApp(ctk.CTk):
             self.status_label.configure(text="⚠️ Select output folder")
             return
         
+        # v1.1: Get selected chapters
+        selected_chapters = self.get_selected_chapters()
+        if not selected_chapters:
+            self.status_label.configure(text="⚠️ No chapters selected")
+            return
+        
         self.running = True
         self.run_btn.configure(state="disabled", text="⏳...")
         self.progress_bar.set(0)
         
-        limit_dir = None
-        if self.selected_only_var.get() and self.chapters:
-            limit_dir = self.chapters[self.current_chapter_idx]
+        # v1.1: Copy page positions for thread safety
+        page_positions = dict(self.page_positions)
         
         def worker():
             try:
-                args = self._build_args()
-                run_with_args(args, log=lambda m: self.after(0, lambda: self.status_label.configure(text=m)), limit_dir=limit_dir)
+                # Process each selected chapter
+                total_pages = 0
+                processed = 0
+                
+                # Count total pages first
+                for chapter in selected_chapters:
+                    if chapter == Path(inp):
+                        pages = [p for p in chapter.iterdir() if p.is_file() and p.suffix.lower() in self.EXTENSIONS]
+                    else:
+                        pages = list(chapter.rglob("*"))
+                        pages = [p for p in pages if p.is_file() and p.suffix.lower() in self.EXTENSIONS]
+                    total_pages += len(pages)
+                
+                if total_pages == 0:
+                    self.after(0, lambda: self._finish(False, "No images found"))
+                    return
+                
+                # Process each page
+                watermark = Image.open(wm).convert("RGBA")
+                
+                for chapter in selected_chapters:
+                    if chapter == Path(inp):
+                        pages = sorted([p for p in chapter.iterdir() if p.is_file() and p.suffix.lower() in self.EXTENSIONS], key=lambda p: p.name.lower())
+                    else:
+                        pages = sorted([p for p in chapter.rglob("*") if p.is_file() and p.suffix.lower() in self.EXTENSIONS], key=lambda p: p.name.lower())
+                    
+                    for page_path in pages:
+                        # Build args for this specific page (with its saved position if any)
+                        args = self._build_args(for_page=page_path.name)
+                        args.output = Path(out)
+                        args.input = Path(inp)
+                        
+                        # Process file
+                        try:
+                            from watermark_bulk import process_file, load_overrides
+                            overrides = load_overrides(None)
+                            process_file(page_path, watermark, args, overrides, Path(inp), log=lambda m: None)
+                            processed += 1
+                            progress = processed / total_pages
+                            self.after(0, lambda p=progress, n=page_path.name: (
+                                self.progress_bar.set(p),
+                                self.status_label.configure(text=f"Processing: {n}")
+                            ))
+                        except Exception as e:
+                            self.after(0, lambda e=e, n=page_path.name: self.status_label.configure(text=f"Error on {n}: {e}"))
+                
                 self.after(0, lambda: self._finish(True))
             except Exception as e:
                 self.after(0, lambda: self._finish(False, str(e)))
@@ -576,6 +730,98 @@ class WatermarkApp(ctk.CTk):
         self.run_btn.configure(state="normal", text="🚀 Run")
         self.progress_bar.set(1 if success else 0)
         self.status_label.configure(text="✅ Done!" if success else f"❌ {error}")
+    
+    # ===== v1.1 HANDLER METHODS =====
+    
+    def _select_all_chapters(self):
+        """Select all chapters for processing."""
+        for var in self.chapter_check_vars:
+            var.set(True)
+        self._update_chapter_count()
+    
+    def _deselect_all_chapters(self):
+        """Deselect all chapters."""
+        for var in self.chapter_check_vars:
+            var.set(False)
+        self._update_chapter_count()
+    
+    def _update_chapter_count(self):
+        """Update the chapter selection count label."""
+        selected = sum(1 for var in self.chapter_check_vars if var.get())
+        total = len(self.chapter_check_vars)
+        self.chapter_select_label.configure(text=f"{selected}/{total}")
+    
+    def _save_page_position(self):
+        """Save current manual position for the selected page."""
+        if not self.pages or self.current_page_idx >= len(self.pages):
+            self.status_label.configure(text="⚠️ No page selected")
+            return
+        
+        pos = self.preview_panel.get_manual_position()
+        if not pos:
+            self.status_label.configure(text="⚠️ Click on preview to set position first")
+            return
+        
+        page = self.pages[self.current_page_idx]
+        self.page_positions[page.name] = pos
+        self._update_position_count()
+        self._update_page_button_indicator(self.current_page_idx)
+        self.status_label.configure(text=f"💾 Saved position for {page.name}")
+    
+    def _clear_page_position(self):
+        """Clear saved position for the selected page."""
+        if not self.pages or self.current_page_idx >= len(self.pages):
+            return
+        
+        page = self.pages[self.current_page_idx]
+        if page.name in self.page_positions:
+            del self.page_positions[page.name]
+            self._update_position_count()
+            self._update_page_button_indicator(self.current_page_idx)
+            self.status_label.configure(text=f"🗑️ Cleared position for {page.name}")
+        
+        # Also clear the preview crosshair
+        self.preview_panel.clear_manual_position()
+    
+    def _update_position_count(self):
+        """Update the position count label."""
+        count = len(self.page_positions)
+        self.pos_count_label.configure(text=f"📍 {count} page{'s' if count != 1 else ''} with saved positions")
+    
+    def _clear_all_positions(self):
+        """Clear all saved page positions."""
+        if self.page_positions:
+            self.page_positions.clear()
+            # Update all button indicators
+            for i in range(len(self.page_buttons)):
+                self._update_page_button_indicator(i)
+            self._update_position_count()
+            self.preview_panel.clear_manual_position()
+            self.status_label.configure(text="🗑️ Cleared all saved positions")
+    
+    def _update_page_button_indicator(self, index: int):
+        """Update button text to show indicator if page has custom position."""
+        if index < 0 or index >= len(self.page_buttons):
+            return
+        
+        page = self.pages[index]
+        has_pos = page.name in self.page_positions
+        btn = self.page_buttons[index]
+        
+        # Add/remove indicator
+        base_name = page.name
+        if has_pos:
+            btn.configure(text=f"📍 {base_name}")
+        else:
+            btn.configure(text=base_name)
+    
+    def get_selected_chapters(self) -> List[Path]:
+        """Get list of selected chapters for processing."""
+        selected = []
+        for i, var in enumerate(self.chapter_check_vars):
+            if var.get() and i < len(self.chapters):
+                selected.append(self.chapters[i])
+        return selected
 
 
 def main():

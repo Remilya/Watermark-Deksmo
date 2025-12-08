@@ -335,6 +335,23 @@ class PreviewPanel(ctk.CTkFrame):
         """Get the manually set position, or None if not set."""
         return self.crosshair_pos if self.manual_mode else None
     
+    def set_manual_position(self, pos: Tuple[int, int]):
+        """Set the manual position programmatically (for loading saved positions)."""
+        self.crosshair_pos = pos
+        # Enable manual mode if not already
+        if not self.manual_mode:
+            self.manual_var.set(True)
+            self.manual_mode = True
+            self.canvas.configure(cursor="crosshair")
+        # Update info label
+        self.info_label.configure(
+            text=f"🎯 Loaded saved position: ({pos[0]}, {pos[1]})",
+            text_color=COLORS["success"]
+        )
+        # Re-render to show crosshair
+        if self.current_image:
+            self._render_image()
+    
     def clear_manual_position(self):
         """Clear the manual position."""
         self.crosshair_pos = None
