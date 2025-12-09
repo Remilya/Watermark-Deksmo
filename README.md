@@ -19,12 +19,27 @@ A modern, feature-rich desktop application for applying PNG watermarks to large 
 - **JSON Overrides** - Per-file settings for complex layouts
 - **Standalone Executable** - Single .exe file, no Python needed
 
-## ✨ v1.2 New Features
+## ✨ v1.2 Detailed Features
 
-- **Workspace Integration** - `workspace/input` and `output` folders auto-created for easy file management
-- **Expandable Settings** - Settings drawer hidden in preview for a cleaner, distraction-free UI
-- **Per-Page Settings** - Save Scale & Opacity along with position for specific pages
-- **Improved Navigation** - Arrow keys (←/→) and on-screen buttons to navigate pages quickly
+### 🎨 Interaction & UI
+- **Expandable Preview Drawer** - Settings (Anchor, Margin, Scale, Opacity, Quality) are now hidden in a sleek drawer at the bottom of the preview. Hover to reveal them!
+- **Keyboard Navigation** - Use **Left/Right Arrow** keys to flip through pages quickly.
+- **Hover Effects** - Interactive elements now have satisfying glow and color shifts.
+
+### ⚙️ Page-Level Control
+- **Per-Page Settings** - Moving a watermark isn't enough? Now you can set specific **Scale** and **Opacity** for individual pages too.
+- **Shortcuts** - Press `Ctrl+S` to instantly save current page settings.
+- **Feedback** - New processing timer tells you exactly how fast your batch finished.
+
+## 🚀 Usage Guide
+
+1. **Launch**: Run `dist\Watermark-Deksmo.exe`
+2. **Load**: Select your image folder using the "Input" field browse button.
+3. **Position**: 
+   - Click anywhere on the preview to place the watermark.
+   - Hover over the bottom bar to adjust **Anchor**, **Scale**, or **Opacity**.
+   - Use `Ctrl+S` to lock these settings for the current page.
+4. **Process**: Click "Start Batch" - watch the progress bar and timer!
 
 ## 📁 Files
 
