@@ -6,12 +6,13 @@ import customtkinter as ctk
 from pathlib import Path
 from tkinter import filedialog
 from typing import Callable, Optional, List
+import tkinter as tk
 
 from app.theme import COLORS, RADIUS, SPACING, get_font
 
 
 class FileSelector(ctk.CTkFrame):
-    """Modern file selector with browse button and path display."""
+    """Modern file selector with browse button, path display, and drag-drop."""
     
     def __init__(
         self,
@@ -28,8 +29,10 @@ class FileSelector(ctk.CTkFrame):
         self.filetypes = filetypes or [("All files", "*.*")]
         self.on_change = on_change
         self.path_var = ctk.StringVar()
+        self.is_dragging = False
         
         self._build_ui(label)
+        self._setup_drag_drop()
     
     def _build_ui(self, label: str):
         # Label
@@ -43,13 +46,13 @@ class FileSelector(ctk.CTkFrame):
         self.label.pack(fill="x", pady=(0, SPACING["xs"]))
         
         # Container for entry and button
-        container = ctk.CTkFrame(self, fg_color="transparent")
-        container.pack(fill="x")
-        container.columnconfigure(0, weight=1)
+        self.container = ctk.CTkFrame(self, fg_color="transparent")
+        self.container.pack(fill="x")
+        self.container.columnconfigure(0, weight=1)
         
-        # Entry field
+        # Entry field (acts as drop zone)
         self.entry = ctk.CTkEntry(
-            container,
+            self.container,
             textvariable=self.path_var,
             height=40,
             corner_radius=RADIUS["md"],
@@ -57,7 +60,7 @@ class FileSelector(ctk.CTkFrame):
             border_color=COLORS["border"],
             fg_color=COLORS["bg_card"],
             text_color=COLORS["text_primary"],
-            placeholder_text="Click Browse or drag file here...",
+            placeholder_text="📥 Drop file here or click Browse...",
             placeholder_text_color=COLORS["text_muted"],
             font=get_font("sm")
         )
@@ -66,7 +69,7 @@ class FileSelector(ctk.CTkFrame):
         # Browse button
         icon = "📂" if self.is_folder else "📄"
         self.browse_btn = ctk.CTkButton(
-            container,
+            self.container,
             text=f"{icon} Browse",
             width=100,
             height=40,
@@ -81,6 +84,52 @@ class FileSelector(ctk.CTkFrame):
         
         # Bind path changes
         self.path_var.trace_add("write", self._on_path_change)
+    
+    def _setup_drag_drop(self):
+        """Setup drag and drop bindings."""
+        # Bind to the entry widget's internal tkinter canvas
+        try:
+            entry_widget = self.entry._entry
+            entry_widget.drop_target_register('DND_Files')
+            entry_widget.dnd_bind('<<Drop>>', self._on_drop)
+            entry_widget.dnd_bind('<<DragEnter>>', self._on_drag_enter)
+            entry_widget.dnd_bind('<<DragLeave>>', self._on_drag_leave)
+        except (AttributeError, tk.TclError):
+            # TkDND not available, use alternative approach
+            # Bind to general events
+            self.entry.bind("<Button-1>", lambda e: None)  # Keep focus behavior
+    
+    def _on_drop(self, event):
+        """Handle file drop."""
+        try:
+            # Get dropped data
+            data = event.data
+            # Clean up the path (remove braces if present)
+            if data.startswith("{") and data.endswith("}"):
+                data = data[1:-1]
+            
+            path = Path(data)
+            if self.is_folder:
+                if path.is_dir():
+                    self.path_var.set(str(path))
+                elif path.is_file():
+                    # Use parent folder
+                    self.path_var.set(str(path.parent))
+            else:
+                if path.is_file():
+                    self.path_var.set(str(path))
+            
+            self._on_drag_leave(None)
+        except Exception:
+            pass
+    
+    def _on_drag_enter(self, event):
+        """Visual feedback on drag enter."""
+        self.entry.configure(border_color=COLORS["secondary"], border_width=3)
+    
+    def _on_drag_leave(self, event):
+        """Reset visual on drag leave."""
+        self.entry.configure(border_color=COLORS["border"], border_width=2)
     
     def _browse(self):
         if self.is_folder:

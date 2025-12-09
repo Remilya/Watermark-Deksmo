@@ -53,6 +53,12 @@ class WatermarkApp(ctk.CTk):
         except Exception:
             pass
         
+        # v1.2: Setup workspace folders
+        self.workspace_dir = Path(__file__).parent.parent / "workspace"
+        self.default_input = self.workspace_dir / "input"
+        self.default_output = self.workspace_dir / "output"
+        self._ensure_workspace()
+        
         # State
         self.running = False
         self.watermark_image: Optional[Image.Image] = None
@@ -66,9 +72,32 @@ class WatermarkApp(ctk.CTk):
         self.page_buttons: List[ctk.CTkButton] = []
         self.manual_position: Optional[Tuple[int, int]] = None  # For click-to-position
         self.page_positions: dict = {}  # v1.1: {filename: (x, y)} per-page positions
+        self.page_settings: dict = {}   # v1.2: {filename: {scale, opacity}} per-page settings
+        self.show_popup_var = ctk.BooleanVar(value=True)  # v1.2: Show completion popup
+        self.processing_start_time = 0  # v1.2: Track processing time
         
         self._build_ui()
         self._setup_bindings()
+        self._apply_workspace_defaults()
+    
+    def _ensure_workspace(self):
+        """Create workspace folders if they don't exist."""
+        self.default_input.mkdir(parents=True, exist_ok=True)
+        self.default_output.mkdir(parents=True, exist_ok=True)
+    
+    def _apply_workspace_defaults(self):
+        """Apply default workspace folders."""
+        # Set default input/output if not already set
+        self.input_selector.set(str(self.default_input))
+        self.output_selector.set(str(self.default_output))
+    
+    def _setup_bindings(self):
+        """Setup keyboard shortcuts."""
+        # Arrow keys for page navigation
+        self.bind("<Left>", lambda e: self._shift_page(-1))
+        self.bind("<Right>", lambda e: self._shift_page(1))
+        # Ctrl+S to save position
+        self.bind("<Control-s>", lambda e: self._save_page_position())
     
     def _build_ui(self):
         """Build the main application layout."""
@@ -91,9 +120,173 @@ class WatermarkApp(ctk.CTk):
         sidebar = self._build_sidebar(main)
         sidebar.grid(row=1, column=0, sticky="nsew", padx=(0, SPACING["md"]))
         
-        # ===== PREVIEW (full width) =====
-        self.preview_panel = PreviewPanel(main, on_position_click=self._on_position_click)
-        self.preview_panel.grid(row=1, column=1, sticky="nsew")
+        # ===== PREVIEW WITH CONTROLS =====
+        preview_container = ctk.CTkFrame(main, fg_color="transparent")
+        preview_container.grid(row=1, column=1, sticky="nsew")
+        preview_container.rowconfigure(0, weight=1)  # Preview expands
+        preview_container.rowconfigure(1, weight=0)  # Controls fixed
+        preview_container.columnconfigure(0, weight=1)
+        
+        # Preview panel
+        self.preview_panel = PreviewPanel(preview_container, on_position_click=self._on_position_click)
+        self.preview_panel.grid(row=0, column=0, sticky="nsew")
+        
+        # v1.2: Expandable position controls - collapsed by default, expands on hover
+        self.controls_expanded = False
+        self.pos_controls = ctk.CTkFrame(preview_container, fg_color=COLORS["bg_dark"], 
+                                          corner_radius=RADIUS["md"], height=50,
+                                          border_width=1, border_color=COLORS["border"])
+        self.pos_controls.grid(row=1, column=0, sticky="ew", pady=(SPACING["sm"], 0))
+        self.pos_controls.pack_propagate(False)
+        
+        # --- TOP ROW (always visible): Navigation ---
+        top_row = ctk.CTkFrame(self.pos_controls, fg_color="transparent")
+        top_row.pack(fill="x", pady=(SPACING["xs"], 0))
+        
+        # Page navigation arrows
+        self.prev_page_btn = ctk.CTkButton(
+            top_row, text="◀", width=36, height=32,
+            corner_radius=RADIUS["md"], fg_color=COLORS["bg_hover"], 
+            hover_color=COLORS["primary"], font=get_font("lg"),
+            command=lambda: self._shift_page(-1)
+        )
+        self.prev_page_btn.pack(side="left", padx=(SPACING["sm"], 4))
+        
+        self.preview_page_label = ctk.CTkLabel(
+            top_row, text="1/1", font=get_font("sm", bold=True),
+            text_color=COLORS["text_primary"], width=50
+        )
+        self.preview_page_label.pack(side="left", padx=4)
+        
+        self.next_page_btn = ctk.CTkButton(
+            top_row, text="▶", width=36, height=32,
+            corner_radius=RADIUS["md"], fg_color=COLORS["bg_hover"], 
+            hover_color=COLORS["primary"], font=get_font("lg"),
+            command=lambda: self._shift_page(1)
+        )
+        self.next_page_btn.pack(side="left", padx=(4, SPACING["md"]))
+        
+        # Hint text (collapsed state)
+        self.expand_hint = ctk.CTkLabel(
+            top_row, text="▲ Hover for controls", font=get_font("xs"),
+            text_color=COLORS["text_muted"]
+        )
+        self.expand_hint.pack(side="left", padx=SPACING["md"])
+        
+        # Position count (right side of top row)
+        self.pos_count_label = ctk.CTkLabel(
+            top_row, text="📍 0 saved", font=get_font("xs"),
+            text_color=COLORS["text_muted"]
+        )
+        self.pos_count_label.pack(side="right", padx=SPACING["md"])
+        
+        # --- BOTTOM ROW (hidden until hover): Settings Grid ---
+        self.bottom_row = ctk.CTkFrame(self.pos_controls, fg_color="transparent")
+        # Initially hidden - will pack on hover
+        
+        sep = ctk.CTkFrame(self.bottom_row, height=1, fg_color=COLORS["border"])
+        sep.pack(fill="x", padx=SPACING["md"], pady=(4, 4))
+        
+        # Grid container for settings
+        grid_frame = ctk.CTkFrame(self.bottom_row, fg_color="transparent")
+        grid_frame.pack(fill="x", padx=SPACING["sm"], pady=(0, 4))
+        
+        # Left Column: Buttons (Save/Clear)
+        col1 = ctk.CTkFrame(grid_frame, fg_color="transparent")
+        col1.pack(side="left", fill="y", padx=(0, SPACING["md"]))
+        
+        self.save_pos_btn = ctk.CTkButton(
+            col1, text="💾 Save Page Settings", height=32, width=160,
+            corner_radius=6, fg_color=COLORS["secondary"], hover_color=COLORS["secondary_hover"],
+            font=get_font("sm", bold=True), command=self._save_page_position
+        )
+        self.save_pos_btn.pack(fill="x", pady=(0, 4))
+        
+        row_clear = ctk.CTkFrame(col1, fg_color="transparent")
+        row_clear.pack(fill="x")
+        
+        self.clear_pos_btn = ctk.CTkButton(
+            row_clear, text="🗑️ Clear Page", height=28, width=100,
+            corner_radius=4, fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
+            font=get_font("xs"), command=self._clear_page_position
+        )
+        self.clear_pos_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        
+        self.clear_all_btn = ctk.CTkButton(
+            row_clear, text="Clear All", height=28, width=70,
+            corner_radius=4, fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
+            font=get_font("xs"), command=self._clear_all_positions
+        )
+        self.clear_all_btn.pack(side="left")
+
+        # Middle Column: Position (Anchor + Margin)
+        col2 = ctk.CTkFrame(grid_frame, fg_color="transparent")
+        col2.pack(side="left", fill="y", padx=(0, SPACING["md"]))
+        
+        ctk.CTkLabel(col2, text="📍 POSITION", font=get_font("xs", bold=True),
+                     text_color=COLORS["primary"]).pack(anchor="w")
+        
+        self.anchor_selector = AnchorSelector(col2, default="bottom-right", on_change=self._on_setting_change)
+        self.anchor_selector.pack(anchor="w", pady=(0, 4))
+        
+        self.margin_slider = SettingsSlider(
+            col2, label="Margin", from_=0, to=100, default=16, width=140,
+            step=1, format_str="{:.0f}", suffix="px", on_change=self._on_setting_change
+        )
+        self.margin_slider.pack(anchor="w")
+
+        # Right Column: Appearance (Scale, Opacity, Quality)
+        col3 = ctk.CTkFrame(grid_frame, fg_color="transparent")
+        col3.pack(side="left", fill="both", expand=True)
+        
+        ctk.CTkLabel(col3, text="🎨 APPEARANCE", font=get_font("xs", bold=True),
+                     text_color=COLORS["primary"]).pack(anchor="w")
+        
+        self.scale_slider = SettingsSlider(
+            col3, label="Scale", from_=0.05, to=0.75, default=0.25, width=180,
+            step=0.01, format_str="{:.2f}", on_change=self._on_setting_change
+        )
+        self.scale_slider.pack(fill="x", pady=(0, 2))
+        
+        self.opacity_slider = SettingsSlider(
+            col3, label="Opacity", from_=0.1, to=1.0, default=0.6, width=180,
+            step=0.05, format_str="{:.0%}", on_change=self._on_setting_change
+        )
+        self.opacity_slider.pack(fill="x", pady=(0, 2))
+        
+        self.quality_slider = SettingsSlider(
+            col3, label="Quality", from_=50, to=100, default=92, width=180,
+            step=1, format_str="{:.0f}", suffix="%", on_change=self._on_setting_change
+        )
+        self.quality_slider.pack(fill="x", pady=(0, 2))
+        
+        # Hover effect - expand/collapse
+        def on_controls_enter(e):
+            if not self.controls_expanded:
+                self.controls_expanded = True
+                self.pos_controls.configure(height=240, fg_color=COLORS["bg_card"], 
+                                             border_color=COLORS["secondary"])
+                self.bottom_row.pack(fill="x")
+                self.expand_hint.pack_forget()
+        
+        def on_controls_leave(e):
+            # Check if mouse is still inside
+            x, y = self.pos_controls.winfo_pointerxy()
+            widget_x = self.pos_controls.winfo_rootx()
+            widget_y = self.pos_controls.winfo_rooty()
+            widget_w = self.pos_controls.winfo_width()
+            widget_h = self.pos_controls.winfo_height()
+            
+            # Add lighter tolerance for smoother exit
+            if not (widget_x <= x <= widget_x + widget_w and widget_y <= y <= widget_y + widget_h):
+                self.controls_expanded = False
+                self.pos_controls.configure(height=50, fg_color=COLORS["bg_dark"], 
+                                             border_color=COLORS["border"])
+                self.bottom_row.pack_forget()
+                self.expand_hint.pack(side="left", padx=SPACING["md"])
+        
+        self.pos_controls.bind("<Enter>", on_controls_enter)
+        self.pos_controls.bind("<Leave>", on_controls_leave)
         
         # ===== FOOTER =====
         footer = self._build_footer(main)
@@ -129,7 +322,7 @@ class WatermarkApp(ctk.CTk):
         
         # Version
         version = ctk.CTkLabel(
-            header, text="v1.1", font=get_font("xs"),
+            header, text="v1.2", font=get_font("xs"),
             text_color=COLORS["text_muted"], fg_color=COLORS["bg_hover"],
             corner_radius=4, padx=6, pady=2
         )
@@ -168,7 +361,25 @@ class WatermarkApp(ctk.CTk):
         self.output_selector = FileSelector(
             scroll, label="Output Folder", is_folder=True
         )
-        self.output_selector.pack(fill="x", pady=(0, SPACING["md"]))
+        self.output_selector.pack(fill="x", pady=(0, SPACING["sm"]))
+        
+        # v1.2: Workspace buttons
+        workspace_btns = ctk.CTkFrame(scroll, fg_color="transparent")
+        workspace_btns.pack(fill="x", pady=(0, SPACING["md"]))
+        
+        self.open_workspace_btn = ctk.CTkButton(
+            workspace_btns, text="📂 Open Folder", height=28, corner_radius=6,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["bg_active"],
+            font=get_font("xs"), command=self._open_workspace
+        )
+        self.open_workspace_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        
+        self.refresh_btn = ctk.CTkButton(
+            workspace_btns, text="🔄 Refresh", height=28, corner_radius=6,
+            fg_color=COLORS["bg_hover"], hover_color=COLORS["primary"],
+            font=get_font("xs"), command=self._refresh_input
+        )
+        self.refresh_btn.pack(side="left", fill="x", expand=True)
         
         # === CHAPTERS SECTION ===
         chapters_header = ctk.CTkFrame(scroll, fg_color="transparent")
@@ -235,76 +446,11 @@ class WatermarkApp(ctk.CTk):
         self.page_frame = ctk.CTkScrollableFrame(
             scroll, fg_color=COLORS["bg_dark"], corner_radius=RADIUS["sm"], height=80
         )
-        self.page_frame.pack(fill="x", pady=(0, SPACING["sm"]))
+        self.page_frame.pack(fill="x", pady=(0, SPACING["md"]))
         
-        # v1.1: PAGE POSITION SECTION - Made more visible
-        self._add_section_header(scroll, "🎯 PAGE POSITION")
+        # Note: PAGE POSITION controls moved to preview area in v1.2
         
-        pos_btns = ctk.CTkFrame(scroll, fg_color="transparent")
-        pos_btns.pack(fill="x", pady=(0, SPACING["sm"]))
-        
-        self.save_pos_btn = ctk.CTkButton(
-            pos_btns, text="💾 Save Position for Page", height=32, corner_radius=6,
-            fg_color=COLORS["secondary"], hover_color=COLORS["secondary_hover"],
-            font=get_font("sm", bold=True), command=self._save_page_position
-        )
-        self.save_pos_btn.pack(fill="x", pady=(0, 4))
-        
-        clear_row = ctk.CTkFrame(pos_btns, fg_color="transparent")
-        clear_row.pack(fill="x")
-        
-        self.clear_pos_btn = ctk.CTkButton(
-            clear_row, text="🗑️ Clear This Page", height=26, corner_radius=4,
-            fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
-            font=get_font("xs"), command=self._clear_page_position
-        )
-        self.clear_pos_btn.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        
-        self.clear_all_btn = ctk.CTkButton(
-            clear_row, text="Clear All", height=26, corner_radius=4,
-            fg_color=COLORS["bg_hover"], hover_color=COLORS["error"],
-            font=get_font("xs"), command=self._clear_all_positions
-        )
-        self.clear_all_btn.pack(side="left")
-        
-        self.pos_count_label = ctk.CTkLabel(
-            scroll, text="📍 0 pages with saved positions", font=get_font("xs"),
-            text_color=COLORS["text_muted"], anchor="w"
-        )
-        self.pos_count_label.pack(fill="x", pady=(4, SPACING["md"]))
-        
-        # === POSITION SECTION ===
-        self._add_section_header(scroll, "📍 POSITION")
-        
-        self.anchor_selector = AnchorSelector(scroll, default="bottom-right", on_change=self._on_setting_change)
-        self.anchor_selector.pack(fill="x", pady=(0, SPACING["sm"]))
-        
-        self.margin_slider = SettingsSlider(
-            scroll, label="Margin", from_=0, to=100, default=16,
-            step=1, format_str="{:.0f}", suffix="px", on_change=self._on_setting_change
-        )
-        self.margin_slider.pack(fill="x", pady=(0, SPACING["md"]))
-        
-        # === APPEARANCE SECTION ===
-        self._add_section_header(scroll, "🎨 APPEARANCE")
-        
-        self.scale_slider = SettingsSlider(
-            scroll, label="Scale", from_=0.05, to=0.75, default=0.25,
-            step=0.01, format_str="{:.2f}", on_change=self._on_setting_change
-        )
-        self.scale_slider.pack(fill="x", pady=(0, SPACING["sm"]))
-        
-        self.opacity_slider = SettingsSlider(
-            scroll, label="Opacity", from_=0.1, to=1.0, default=0.6,
-            step=0.05, format_str="{:.0%}", on_change=self._on_setting_change
-        )
-        self.opacity_slider.pack(fill="x", pady=(0, SPACING["sm"]))
-        
-        self.quality_slider = SettingsSlider(
-            scroll, label="Quality", from_=50, to=100, default=92,
-            step=1, format_str="{:.0f}", suffix="%", on_change=self._on_setting_change
-        )
-        self.quality_slider.pack(fill="x", pady=(0, SPACING["md"]))
+        # Note: POSITION and APPEARANCE settings moved to preview drawer in v1.2
         
         # === OPTIONS SECTION ===
         self._add_section_header(scroll, "⚙️ OPTIONS")
@@ -341,6 +487,13 @@ class WatermarkApp(ctk.CTk):
             scroll, text="Selected chapter only", variable=self.selected_only_var,
             font=get_font("xs"), text_color=COLORS["text_secondary"],
             fg_color=COLORS["secondary"], height=20
+        ).pack(fill="x", anchor="w", pady=2)
+        
+        # v1.2: Show popup when done
+        ctk.CTkCheckBox(
+            scroll, text="Show popup when done", variable=self.show_popup_var,
+            font=get_font("xs"), text_color=COLORS["text_secondary"],
+            fg_color=COLORS["tertiary"], height=20
         ).pack(fill="x", anchor="w", pady=2)
         
         return sidebar
@@ -405,12 +558,20 @@ class WatermarkApp(ctk.CTk):
         if not folder.is_dir():
             return
         
-        # Clear existing
+        # Clear existing - destroy row frames for chapters (since they contain checkbox + button)
         for btn in self.chapter_buttons:
-            btn.destroy()
+            try:
+                btn.master.destroy()  # Destroy the row frame containing checkbox + button
+            except Exception:
+                pass
         for btn in self.page_buttons:
-            btn.destroy()
+            try:
+                btn.destroy()
+            except Exception:
+                pass
         self.chapter_buttons = []
+        self.chapter_checkboxes = []
+        self.chapter_check_vars = []
         self.page_buttons = []
         self.chapters = []
         self.pages = []
@@ -529,6 +690,9 @@ class WatermarkApp(ctk.CTk):
                 btn.configure(fg_color="transparent", text_color=COLORS["text_secondary"])
         
         self.page_label.configure(text=f"{index+1}/{len(self.pages)}")
+        # Also update preview page label
+        if hasattr(self, 'preview_page_label'):
+            self.preview_page_label.configure(text=f"{index+1}/{len(self.pages)}")
         
         # v1.1: Load saved position for this page (if any)
         saved_pos = self.page_positions.get(page.name)
@@ -538,6 +702,12 @@ class WatermarkApp(ctk.CTk):
         else:
             # Clear any previous position
             self.preview_panel.clear_manual_position()
+        
+        # v1.2: Load saved settings for this page (if any)
+        saved_settings = self.page_settings.get(page.name)
+        if saved_settings:
+            self.scale_slider.set(saved_settings.get('scale', 0.25))
+            self.opacity_slider.set(saved_settings.get('opacity', 0.6))
         
         self._refresh_preview()
     
@@ -617,6 +787,11 @@ class WatermarkApp(ctk.CTk):
             offset_x = 0
             offset_y = 0
         
+        # v1.2: Get per-page settings if available
+        page_settings = self.page_settings.get(for_page, {}) if for_page else {}
+        scale = page_settings.get('scale', self.scale_slider.get())
+        opacity = page_settings.get('opacity', self.opacity_slider.get())
+        
         return Namespace(
             watermark=Path(self.watermark_selector.get()),
             input=Path(self.input_selector.get()) if self.input_selector.get() else Path("."),
@@ -626,8 +801,8 @@ class WatermarkApp(ctk.CTk):
             offset_x=offset_x,
             offset_y=offset_y,
             margin=0 if manual_pos else int(self.margin_slider.get()),
-            scale=self.scale_slider.get(),
-            opacity=self.opacity_slider.get(),
+            scale=scale,
+            opacity=opacity,
             quality=int(self.quality_slider.get()),
             format=self.format_var.get(),
             suffix="",
@@ -666,6 +841,10 @@ class WatermarkApp(ctk.CTk):
         self.running = True
         self.run_btn.configure(state="disabled", text="⏳...")
         self.progress_bar.set(0)
+        
+        # v1.2: Track processing time
+        import time
+        self.processing_start_time = time.time()
         
         # v1.1: Copy page positions for thread safety
         page_positions = dict(self.page_positions)
@@ -725,11 +904,32 @@ class WatermarkApp(ctk.CTk):
         threading.Thread(target=worker, daemon=True).start()
     
     def _finish(self, success: bool, error: str = ""):
-        """Handle completion."""
+        """Handle completion with v1.2 time display and popup."""
+        import time
+        import tkinter.messagebox as messagebox
+        
         self.running = False
         self.run_btn.configure(state="normal", text="🚀 Run")
         self.progress_bar.set(1 if success else 0)
-        self.status_label.configure(text="✅ Done!" if success else f"❌ {error}")
+        
+        # v1.2: Calculate processing time
+        elapsed = time.time() - self.processing_start_time
+        if elapsed < 1:
+            time_str = f"{int(elapsed * 1000)}ms"
+        else:
+            time_str = f"{elapsed:.1f}s"
+        
+        if success:
+            self.status_label.configure(text=f"✅ Done in {time_str}!")
+            
+            # v1.2: Show popup if enabled
+            if self.show_popup_var.get():
+                messagebox.showinfo(
+                    "Watermark-Deksmo",
+                    f"✅ Processing complete!\n\nTime: {time_str}"
+                )
+        else:
+            self.status_label.configure(text=f"❌ {error}")
     
     # ===== v1.1 HANDLER METHODS =====
     
@@ -752,7 +952,7 @@ class WatermarkApp(ctk.CTk):
         self.chapter_select_label.configure(text=f"{selected}/{total}")
     
     def _save_page_position(self):
-        """Save current manual position for the selected page."""
+        """Save current manual position AND settings for the selected page."""
         if not self.pages or self.current_page_idx >= len(self.pages):
             self.status_label.configure(text="⚠️ No page selected")
             return
@@ -763,10 +963,19 @@ class WatermarkApp(ctk.CTk):
             return
         
         page = self.pages[self.current_page_idx]
+        
+        # Save position
         self.page_positions[page.name] = pos
+        
+        # v1.2: Also save scale and opacity
+        self.page_settings[page.name] = {
+            'scale': self.scale_slider.get(),
+            'opacity': self.opacity_slider.get()
+        }
+        
         self._update_position_count()
         self._update_page_button_indicator(self.current_page_idx)
-        self.status_label.configure(text=f"💾 Saved position for {page.name}")
+        self.status_label.configure(text=f"💾 Saved position + settings for {page.name}")
     
     def _clear_page_position(self):
         """Clear saved position for the selected page."""
@@ -786,7 +995,7 @@ class WatermarkApp(ctk.CTk):
     def _update_position_count(self):
         """Update the position count label."""
         count = len(self.page_positions)
-        self.pos_count_label.configure(text=f"📍 {count} page{'s' if count != 1 else ''} with saved positions")
+        self.pos_count_label.configure(text=f"📍 {count} saved")
     
     def _clear_all_positions(self):
         """Clear all saved page positions."""
@@ -822,6 +1031,66 @@ class WatermarkApp(ctk.CTk):
             if var.get() and i < len(self.chapters):
                 selected.append(self.chapters[i])
         return selected
+    
+    # ===== v1.2 WORKSPACE METHODS =====
+    
+    def _open_workspace(self):
+        """Show menu to choose which folder to open."""
+        import tkinter as tk
+        
+        menu = tk.Menu(self, tearoff=0)
+        menu.configure(bg=COLORS["bg_card"], fg=COLORS["text_primary"], 
+                       activebackground=COLORS["primary"], activeforeground="white")
+        
+        menu.add_command(label="📥 Open Input Folder", command=self._open_input_folder)
+        menu.add_command(label="📤 Open Output Folder", command=self._open_output_folder)
+        
+        # Show menu at button position
+        try:
+            x = self.open_workspace_btn.winfo_rootx()
+            y = self.open_workspace_btn.winfo_rooty() + self.open_workspace_btn.winfo_height()
+            menu.tk_popup(x, y)
+        except Exception:
+            pass
+    
+    def _open_input_folder(self):
+        """Open input folder in Explorer."""
+        import subprocess
+        import os
+        
+        input_path = self.input_selector.get()
+        folder = input_path if input_path and Path(input_path).is_dir() else str(self.default_input)
+        
+        if os.name == 'nt':
+            subprocess.run(['explorer', folder], check=False)
+        self.status_label.configure(text=f"📂 Opened input folder")
+    
+    def _open_output_folder(self):
+        """Open output folder in Explorer."""
+        import subprocess
+        import os
+        
+        output_path = self.output_selector.get()
+        folder = output_path if output_path and Path(output_path).is_dir() else str(self.default_output)
+        
+        if os.name == 'nt':
+            subprocess.run(['explorer', folder], check=False)
+        self.status_label.configure(text=f"📂 Opened output folder")
+    
+    def _refresh_input(self):
+        """Refresh the chapters and pages from the input folder."""
+        input_path = self.input_selector.get()
+        if not input_path:
+            input_path = str(self.default_input)
+            self.input_selector.set(input_path)
+        
+        folder = Path(input_path)
+        if folder.is_dir():
+            # Just call the normal change handler which properly reloads
+            self._on_input_change(input_path)
+            self.status_label.configure(text=f"🔄 Refreshed!")
+        else:
+            self.status_label.configure(text="⚠️ No valid input folder")
 
 
 def main():

@@ -2,6 +2,8 @@
 
 **Open Source Batch Watermarking Tool for Comics & Manga**
 
+![Version](https://img.shields.io/badge/version-v1.2-blue.svg) ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) ![License](https://img.shields.io/badge/license-MIT-green.svg) ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+
 ![Logo](logo-open.png)
 
 A modern, feature-rich desktop application for applying PNG watermarks to large collections of comic/manga pages with flexible placement controls and real-time preview.
@@ -16,6 +18,14 @@ A modern, feature-rich desktop application for applying PNG watermarks to large 
 - **Flexible Placement** - Anchor points, offsets, margins, scale, opacity
 - **JSON Overrides** - Per-file settings for complex layouts
 - **Standalone Executable** - Single .exe file, no Python needed
+
+## ✨ v1.2 New Features
+
+- **Workspace Integration** - `workspace/input` and `output` folders auto-created for easy file management
+- **Drag & Drop** - Drop files or folders directly into path fields to load them
+- **Expandable Settings** - Settings drawer hidden in preview for a cleaner, distraction-free UI
+- **Per-Page Settings** - Save Scale & Opacity along with position for specific pages
+- **Improved Navigation** - Arrow keys (←/→) and on-screen buttons to navigate pages quickly
 
 ## 📁 Files
 
