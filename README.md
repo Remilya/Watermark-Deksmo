@@ -1,4 +1,4 @@
-# Watermark-Deksmo
+# Watermark-Deksmo v1.2 🌊 v1.2 🌊
 
 **Open Source Batch Watermarking Tool for Comics & Manga**
 
@@ -33,7 +33,7 @@ A modern, feature-rich desktop application for applying PNG watermarks to large 
 
 ## 🚀 Usage Guide
 
-1. **Launch**: Run `dist\Watermark-Deksmo.exe`
+1. **Launch**: Run `Watermark-Deksmo.exe`
 2. **Load**: Select your image folder using the "Input" field browse button.
 3. **Position**: 
    - Click anywhere on the preview to place the watermark.
