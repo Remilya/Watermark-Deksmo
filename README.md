@@ -22,7 +22,6 @@ A modern, feature-rich desktop application for applying PNG watermarks to large 
 ## ✨ v1.2 New Features
 
 - **Workspace Integration** - `workspace/input` and `output` folders auto-created for easy file management
-- **Drag & Drop** - Drop files or folders directly into path fields to load them
 - **Expandable Settings** - Settings drawer hidden in preview for a cleaner, distraction-free UI
 - **Per-Page Settings** - Save Scale & Opacity along with position for specific pages
 - **Improved Navigation** - Arrow keys (←/→) and on-screen buttons to navigate pages quickly

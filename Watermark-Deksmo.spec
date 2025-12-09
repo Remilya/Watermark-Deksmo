@@ -52,7 +52,6 @@ a = Analysis(
         'app.components.preview_panel',
         'app.components.browser_panel',
         'watermark_bulk',
-        'tkinterdnd2',
     ],
     hookspath=[],
     hooksconfig={},
